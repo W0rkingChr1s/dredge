@@ -1,0 +1,12 @@
+[Unit]
+Description=dredge schedule
+
+[Timer]
+# Entspricht cron "0 9 * * 1" (Montag 09:00).
+# `dredge install-timer` erzeugt das passend aus deiner config.yaml.
+OnCalendar=Mon *-*-* 09:00:00
+Persistent=true
+Unit=dredge.service
+
+[Install]
+WantedBy=timers.target

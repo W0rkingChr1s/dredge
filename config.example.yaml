@@ -1,0 +1,72 @@
+# dredge – Beispielkonfiguration
+# Kann komplett per `dredge setup` erzeugt/geändert werden.
+# Speicherort (Standard): /etc/dredge/config.yaml  oder
+#   ~/.config/dredge/config.yaml  – oder $DREDGE_CONFIG
+
+docker:
+  # Engine-API-Endpunkt.
+  host: "unix:///var/run/docker.sock"
+  # Empfohlen stattdessen ein socket-proxy (eingeschränkte Endpunkte):
+  #   host: "http://dockerproxy:2375"
+  api_version: ""        # leer = keine Version im Pfad (proxy-freundlich)
+  timeout_seconds: 30
+
+schedule:
+  # Standard-Cron (5 Felder). Wird von systemd-Timer bzw. `daemon` genutzt.
+  cron: "0 9 * * 1"      # Montag 09:00
+  timezone: "Local"      # oder z. B. "Europe/Berlin"
+
+# Pro Ressourcentyp: enabled + mode (off | auto | ask)
+#   off  = nie anfassen
+#   auto = ohne Nachfrage bereinigen
+#   ask  = vorher per Telegram fragen (Buttons)
+resources:
+  images_dangling: { enabled: true,  mode: ask }   # <none>:<none>-Images
+  images_unused:   { enabled: false, mode: ask }   # getaggte, aber ungenutzte Images
+  containers:      { enabled: true,  mode: ask }   # gestoppte Container
+  networks:        { enabled: true,  mode: auto }  # ungenutzte user-Netzwerke
+  build_cache:     { enabled: true,  mode: auto }  # Buildkit-Cache (oft der größte Brocken)
+  volumes:         { enabled: true,  mode: ask }   # verwaiste Volumes ⚠ Datenverlust
+
+safety:
+  # Nur Objekte entfernen, die älter als N Stunden sind (0 = aus).
+  min_age_hours: 24
+  # Objekte mit diesen Labels werden NIE entfernt (key=value oder nur key).
+  protect_labels:
+    - "janitor.keep=true"
+  # Volume-Namen, die geschützt sind (Glob: * und ?).
+  protect_volume_names:
+    - "*_data"
+    - "portainer_*"
+  # Image repo:tag, die geschützt sind (Glob).
+  protect_image_repos: []
+  # Globaler Trockenlauf: nichts wird wirklich gelöscht.
+  dry_run: false
+
+trigger:
+  # Lauf nur ausführen, wenn mind. so viel MB freigebbar wären (0 = immer).
+  min_reclaimable_mb: 0
+  # (Best-effort) nur ab dieser Disk-Auslastung – 0 = aus.
+  min_disk_usage_percent: 0
+
+notify:
+  # Interaktiver Kanal mit Buttons.
+  telegram:
+    enabled: true
+    bot_token: ""                 # von @BotFather – eigener Bot empfohlen!
+    chat_id: ""                   # Gruppen-/Chat-ID, z. B. "-1001234567890"
+    approval_timeout_minutes: 120 # so lange auf Button-Antwort warten
+    on_timeout: none              # none | dangling | all  (Default bei Timeout)
+  # Zusätzliche/alternative Kanäle (shoutrrr) für Report + Bestätigung.
+  # Beispiele:
+  #   smtp://user:pass@smtp.example.com:587/?from=dredge@example.com&to=me@example.com
+  #   ntfy://ntfy.sh/mein-topic
+  #   gotify://gotify.example.com/TOKEN
+  #   discord://TOKEN@WEBHOOKID
+  urls: []
+  # Auch dann melden, wenn es nichts zu tun gab.
+  report_on_nothing: false
+
+audit:
+  # JSON-Lines-Historie jedes Laufs.
+  log_file: "/var/lib/dredge/history.jsonl"

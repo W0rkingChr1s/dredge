@@ -1,0 +1,59 @@
+# dredge als Container – interner Scheduler (`daemon`) läuft im Vordergrund.
+#
+# Erst-Einrichtung einmalig interaktiv, danach läuft der Stack von selbst:
+#   docker compose run --rm dredge setup     # schreibt ./config/config.yaml
+#   docker compose up -d
+#
+# Zugriff auf die Engine-API: siehe die zwei Varianten unten. Empfohlen ist
+# der socket-proxy – dredge braucht schreibenden Zugriff, und ein direkt
+# gemounteter Socket gibt effektiv Root auf dem Host.
+
+services:
+  dredge:
+    image: ghcr.io/w0rkingchr1s/dredge:latest
+    # Alternativ lokal bauen statt das Image zu ziehen:
+    # build:
+    #   context: .
+    #   args:
+    #     VERSION: "dev"
+    restart: unless-stopped
+    environment:
+      TZ: "UTC"
+      DREDGE_CONFIG: /config/config.yaml
+    volumes:
+      - ./config:/config              # config.yaml, per `setup` erzeugt
+      - dredge_data:/var/lib/dredge   # Audit-Log (history.jsonl)
+
+    # ---- Variante A (empfohlen): socket-proxy ----------------------------
+    # In config.yaml:  docker.host: http://dockerproxy:2375
+    # Beide Container müssen im selben Netzwerk hängen.
+    depends_on:
+      - dockerproxy
+
+    # ---- Variante B: Socket direkt mounten -------------------------------
+    # Einfacher, aber deutlich weniger abgesichert. Dann den dockerproxy-
+    # Service unten löschen und in config.yaml setzen:
+    #   docker.host: unix:///var/run/docker.sock
+    # volumes:
+    #   - /var/run/docker.sock:/var/run/docker.sock
+
+  # Tecnativa docker-socket-proxy – gibt gezielt nur die Endpunkte frei,
+  # die dredge braucht. POST=1 schaltet auch die nötigen DELETE-/prune-
+  # Aufrufe frei; ohne das kann dredge nur scannen, nicht aufräumen.
+  dockerproxy:
+    image: tecnativa/docker-socket-proxy:latest
+    restart: unless-stopped
+    environment:
+      PING: 1
+      IMAGES: 1
+      VOLUMES: 1
+      NETWORKS: 1
+      CONTAINERS: 1
+      SYSTEM: 1
+      BUILD: 1
+      POST: 1
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+
+volumes:
+  dredge_data:

@@ -1,0 +1,13 @@
+[Unit]
+Description=dredge cleanup run
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=oneshot
+Environment=DREDGE_CONFIG=/etc/dredge/config.yaml
+ExecStart=/usr/local/bin/dredge run
+# Härtung (optional):
+# DynamicUser=yes
+# ProtectSystem=strict
+# ReadWritePaths=/var/lib/dredge
