@@ -9,7 +9,7 @@ meldet und per Telegram-Buttons zur Freigabe stellt – nur eben ohne n8n, self-
 
 - **Ein Binary**, keine Runtime-Abhängigkeiten. Läuft als systemd-Timer **oder** als Docker-Container.
 - **Geführte Einrichtung** im Terminal-UI (`setup`), Einstellungen jederzeit änderbar (`settings`).
-- **Interaktive Freigabe** über Telegram (Inline-Buttons) mit Timeout-Default – plus Mail/ntfy/Gotify/Discord über shoutrrr.
+- **Interaktive Freigabe** über Telegram: Checkboxen zum Mehrfach-Auswählen, mit Timeout-Default – plus Mail/ntfy/Gotify/Discord über shoutrrr.
 - **Safety-first**: Mindestalter, Schutz-Labels, geschützte Volume-Namen, Trockenlauf.
 - **Voller Umfang**: dangling & ungenutzte Images, gestoppte Container, ungenutzte Netzwerke, Build-Cache und (extra abgesicherte) Volumes.
 
@@ -88,9 +88,30 @@ Jeder Typ (Images, Container, Netzwerke, Build-Cache, Volumes) hat einen Modus:
 - `ask` – löst eine Telegram-Freigabe mit Buttons aus
 
 Bei einem Lauf werden `auto`-Typen direkt eingeplant; für `ask`-Typen kommt eine
-Telegram-Nachricht mit Buttons („🧹 Alles / ▶ nur X / ✋ Nichts"). Antwortest du
-nicht innerhalb von `approval_timeout_minutes`, greift `on_timeout`
-(`none` | `dangling` | `all`).
+Telegram-Nachricht mit Buttons.
+
+**Mehrfachauswahl:** Jeder `ask`-Typ hat eine eigene Checkbox mit seiner Größe.
+Antippen wählt an bzw. ab, die Nachricht aktualisiert sich sofort:
+
+```
+🧹 Alles bereinigen
+☑ Dangling Images · 400.0 MB
+☐ Ungenutzte Images · 2.1 GB
+☑ Verwaiste Volumes ⚠ · 100.0 MB
+✅ Auswahl bereinigen · 2 · 500.0 MB
+✋ Nichts
+```
+
+`✅ Auswahl bereinigen` übernimmt genau das Angekreuzte; `🧹 Alles` und
+`✋ Nichts` entscheiden sofort. Ohne Auswahl passiert bei `✅` nichts außer
+einem Hinweis – ein Fehlgriff soll nicht als „nichts bereinigen" durchgehen.
+Nach der Entscheidung verschwinden die Buttons und die Nachricht zeigt, was
+freigegeben wurde. Steht nur ein einziger Typ zur Wahl, bleibt es beim
+einfachen Alles/Nichts.
+
+Antwortest du nicht innerhalb von `approval_timeout_minutes`, greift
+`on_timeout` (`none` | `dangling` | `all`). Das Zeitlimit läuft ab dem
+Absenden – Antippen verlängert es nicht.
 
 ## Safety-Rails
 
@@ -210,7 +231,6 @@ spätere Auswertung/Trends.
 - Threshold-Trigger (`trigger.min_reclaimable_mb`): still bleiben, wenn eh nichts anliegt.
 - Prometheus-Metrik-Endpoint für ein Grafana-/Uptime-Kuma-Dashboard.
 - Mehrere Docker-Hosts in einem Lauf.
-- Toggle-Buttons (Mehrfachauswahl) statt Einfachauswahl in Telegram.
 
 ## Projektstruktur
 

@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -101,6 +102,32 @@ func (b *Bot) SendButtons(ctx context.Context, text string, rows [][]Button) (in
 	return msg.MessageID, nil
 }
 
+// EditKeyboard replaces the inline keyboard of an existing message. This is
+// what makes toggle buttons work: the message stays, only the markup changes.
+func (b *Bot) EditKeyboard(ctx context.Context, messageID int64, rows [][]Button) error {
+	kbJSON, _ := json.Marshal(map[string]any{"inline_keyboard": toKeyboard(rows)})
+	_, err := b.call(ctx, "editMessageReplyMarkup", url.Values{
+		"chat_id":      {b.chatID},
+		"message_id":   {strconv.FormatInt(messageID, 10)},
+		"reply_markup": {string(kbJSON)},
+	})
+	return err
+}
+
+// EditMessage replaces text and keyboard of an existing message. Passing no
+// rows removes the buttons, so a decided dialog cannot be pressed again.
+func (b *Bot) EditMessage(ctx context.Context, messageID int64, text string, rows [][]Button) error {
+	kbJSON, _ := json.Marshal(map[string]any{"inline_keyboard": toKeyboard(rows)})
+	_, err := b.call(ctx, "editMessageText", url.Values{
+		"chat_id":      {b.chatID},
+		"message_id":   {strconv.FormatInt(messageID, 10)},
+		"text":         {text},
+		"parse_mode":   {"HTML"},
+		"reply_markup": {string(kbJSON)},
+	})
+	return err
+}
+
 func toKeyboard(rows [][]Button) [][]map[string]string {
 	out := make([][]map[string]string, 0, len(rows))
 	for _, row := range rows {
@@ -132,17 +159,26 @@ type ErrTimeout struct{}
 
 func (ErrTimeout) Error() string { return "keine Antwort innerhalb des Zeitlimits" }
 
-// AwaitCallback long-polls for a callback_query belonging to messageID whose
-// data is in `allowed`, until `timeout` elapses. It acknowledges the button
-// press and returns the chosen data. Returns ErrTimeout on deadline.
+// CallbackAction tells AwaitDecision how to react to a button press.
+type CallbackAction struct {
+	// Toast is the short confirmation shown on the pressed button.
+	Toast string
+	// Keyboard, when non-nil, replaces the message's inline keyboard. This is
+	// how a toggled checkbox becomes visible.
+	Keyboard [][]Button
+	// Done ends the dialog.
+	Done bool
+}
+
+// AwaitDecision long-polls for callback queries belonging to messageID and
+// feeds each one to press, until press reports Done or timeout elapses.
+// Button presses are acknowledged and keyboard updates applied, so several
+// buttons can be toggled before the dialog is finished. Returns ErrTimeout on
+// deadline.
 //
 // Note: getUpdates requires that NO webhook is set for this bot token. Use a
 // dedicated bot for dredge if another tool (e.g. n8n) uses webhooks.
-func (b *Bot) AwaitCallback(ctx context.Context, messageID int64, allowed []string, timeout time.Duration) (string, error) {
-	allow := map[string]bool{}
-	for _, a := range allowed {
-		allow[a] = true
-	}
+func (b *Bot) AwaitDecision(ctx context.Context, messageID int64, timeout time.Duration, press func(data string) CallbackAction) error {
 	deadline := time.Now().Add(timeout)
 	var offset int64
 
@@ -172,7 +208,7 @@ func (b *Bot) AwaitCallback(ctx context.Context, messageID int64, allowed []stri
 		if err != nil {
 			select {
 			case <-ctx.Done():
-				return "", ctx.Err()
+				return ctx.Err()
 			case <-time.After(2 * time.Second):
 			}
 			continue
@@ -190,15 +226,18 @@ func (b *Bot) AwaitCallback(ctx context.Context, messageID int64, allowed []stri
 			if messageID != 0 && cq.Msg.MessageID != messageID {
 				continue // stale / different message
 			}
-			if !allow[cq.Data] {
-				_ = b.answer(ctx, cq.ID, "Ungültige Auswahl")
-				continue
+			act := press(cq.Data)
+			_ = b.answer(ctx, cq.ID, act.Toast)
+			if act.Keyboard != nil {
+				// Rein kosmetisch – ein Fehler hier darf die Freigabe nicht kippen.
+				_ = b.EditKeyboard(ctx, messageID, act.Keyboard)
 			}
-			_ = b.answer(ctx, cq.ID, "✔️ übernommen")
-			return cq.Data, nil
+			if act.Done {
+				return nil
+			}
 		}
 	}
-	return "", ErrTimeout{}
+	return ErrTimeout{}
 }
 
 func (b *Bot) answer(ctx context.Context, callbackID, text string) error {
