@@ -13,24 +13,53 @@ meldet und per Telegram-Buttons zur Freigabe stellt – nur eben ohne n8n, self-
 - **Safety-first**: Mindestalter, Schutz-Labels, geschützte Volume-Namen, Trockenlauf.
 - **Voller Umfang**: dangling & ungenutzte Images, gestoppte Container, ungenutzte Netzwerke, Build-Cache und (extra abgesicherte) Volumes.
 
+## Installation
+
+`dredge` ist ein statisches Binary – auf dem Zielhost muss **kein Go** installiert sein.
+
+**Fertiges Release-Binary (empfohlen)**
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/W0rkingChr1s/dredge/main/install.sh | sh
+```
+
+Das Skript erkennt die Architektur (amd64/arm64/armv7), lädt das passende
+Binary aus dem letzten Release, **prüft die SHA256-Summe** und legt es nach
+`/usr/local/bin/dredge`. Ohne root geht es auch:
+`PREFIX=$HOME/.local sh install.sh`, eine bestimmte Version mit
+`--version v0.1.0`.
+
+**Aus dem Quellcode** (braucht Go ≥ 1.24 auf der Baumaschine)
+
+```bash
+make build          # -> dist/dredge, ohne sudo
+sudo make install   # -> /usr/local/bin/dredge
+```
+
+> `make build` niemals mit `sudo` aufrufen: `sudo` verwirft `$PATH`, dann
+> findet root das `go` nicht (`/bin/sh: 1: go: not found`). Falls es doch
+> nötig ist: `make build GO=/usr/local/go/bin/go`.
+
+**Als Container** – siehe [Deployment A](#deployment-a--docker-container),
+da braucht es gar keine Installation auf dem Host.
+
 ## Schnellstart
 
 ```bash
-# 1. Bauen (oder fertiges Binary aus dist/ nehmen)
-make build            # -> dist/dredge
+# 1. Einrichten (interaktiver Assistent)
+sudo mkdir -p /etc/dredge && sudo dredge setup
 
-# 2. Einrichten (interaktiver Assistent)
-dredge setup
+# 2. Anschauen, was bereinigt würde – ändert nichts
+sudo dredge scan
 
-# 3. Anschauen, was bereinigt würde – ändert nichts
-dredge scan
+# 3. Kompletter Probelauf ohne Löschen
+sudo dredge run --dry-run
 
-# 4. Kompletter Probelauf ohne Löschen
-dredge run --dry-run
-
-# 5. Scharf schalten
-dredge run
+# 4. Regelmäßig laufen lassen (systemd-Timer)
+sudo dredge install
 ```
+
+Am Ende von `setup` bietet der Assistent das Einplanen direkt mit an.
 
 ## Befehle
 
@@ -43,8 +72,12 @@ dredge run
 | `run --dry-run` | Alles simulieren, nichts löschen |
 | `run --yes` | Nicht-interaktiv alle `ask`-Typen freigeben |
 | `daemon` | Interner Scheduler im Vordergrund (für Container) |
-| `install-timer` | systemd service + timer aus dem Schedule erzeugen |
+| `install` | systemd service + timer aus dem Schedule erzeugen und aktivieren |
+| `install --print` | Units nur ausgeben, nichts schreiben |
+| `uninstall` | Timer wieder entfernen (Konfiguration bleibt) |
 | `version` | Version anzeigen |
+
+`install-timer` funktioniert weiterhin als veralteter Alias für `install`.
 
 ## Modi pro Ressourcentyp
 
@@ -77,10 +110,17 @@ gleich einen socket-proxy mit.
 
 ```bash
 # Erst-Einrichtung einmalig interaktiv:
+mkdir -p config
+sudo chown 10001:10001 config          # UID/GID des Nutzers im Image
 docker compose run --rm dredge setup   # schreibt ./config/config.yaml
 # Danach:
 docker compose up -d                   # CMD = daemon, läuft nach Schedule
 ```
+
+Der Container läuft unpriviligiert als UID/GID `10001`. Gehört `./config` dem
+root-Nutzer, kann `setup` nichts speichern – daher das `chown`. Wer das
+Verzeichnis lieber dem eigenen Account gibt, setzt in der compose-Datei
+`user: "1000:1000"`.
 
 Für den Zugriff auf die Engine-API gibt es zwei Wege:
 
@@ -103,18 +143,45 @@ werden pro Objekt gemeldet, nichts anderes bricht ab.
 ## Deployment B – Host-Binary + systemd
 
 ```bash
-sudo install -m0755 dist/dredge /usr/local/bin/dredge
 sudo mkdir -p /etc/dredge
-sudo DREDGE_CONFIG=/etc/dredge/config.yaml dredge setup
-
-# Timer aus dem Schedule erzeugen und aktivieren:
-sudo dredge install-timer        # oder: --print zum Ansehen
-sudo systemctl daemon-reload
-sudo systemctl enable --now dredge.timer
-systemctl list-timers dredge.timer
+sudo dredge setup     # schreibt /etc/dredge/config.yaml
+sudo dredge install   # Units erzeugen, daemon-reload, Timer aktivieren
 ```
 
-`install-timer` übersetzt deinen Cron-Ausdruck automatisch nach `OnCalendar`.
+`dredge install` erledigt in einem Rutsch:
+
+- übersetzt `schedule.cron` nach `OnCalendar` und hängt `schedule.timezone` an
+  (braucht systemd ≥ 252; ältere Versionen bekommen eine Warnung und nutzen die
+  Zeitzone des Hosts),
+- setzt `TimeoutStartSec` über das Telegram-Freigabe-Timeout, damit systemd
+  einen wartenden Lauf nicht abschneidet,
+- legt das State-Verzeichnis für die Historie an,
+- schreibt eine gehärtete Service-Unit (`ProtectSystem=strict`,
+  `NoNewPrivileges`, …),
+- führt `daemon-reload` und `enable --now` aus und zeigt den nächsten Lauf.
+
+Nützliche Varianten:
+
+| Aufruf | Wirkung |
+|---|---|
+| `dredge install --print` | Units nur anzeigen (kein root nötig) |
+| `sudo dredge install --enable=false` | schreiben, aber nicht aktivieren |
+| `sudo dredge install --exec-path /opt/dredge` | anderen Binärpfad in die Unit schreiben |
+| `sudo dredge install --user dredge` | Dienst unter einem eigenen Nutzer laufen lassen |
+| `sudo dredge install --jitter 5m` | Start zufällig um bis zu 5 min verzögern |
+| `sudo dredge uninstall` | Timer stoppen, deaktivieren, Units löschen |
+
+Der Aufruf ist idempotent: unveränderte Units werden nicht neu geschrieben und
+lösen kein `daemon-reload` aus. Nach jeder Zeitplan-Änderung (`dredge settings`)
+einfach `sudo dredge install` erneut ausführen.
+
+Kontrolle und Fehlersuche:
+
+```bash
+systemctl list-timers dredge.timer   # wann läuft es das nächste Mal?
+sudo systemctl start dredge.service  # Lauf sofort auslösen
+journalctl -u dredge.service -f      # mitlesen
+```
 
 ## Konfiguration
 
@@ -149,7 +216,7 @@ spätere Auswertung/Trends.
 
 ```
 main.go                     Einstieg
-cmd/                        CLI (cobra): setup, run, scan, daemon, install-timer …
+cmd/                        CLI (cobra): setup, run, scan, daemon, install …
 internal/config             YAML-Config, Defaults, Validierung
 internal/docker             schlanker Engine-API-Client (raw HTTP, proxy-freundlich)
 internal/janitor            Scan → Plan (Safety-Rails) → Execute
@@ -157,7 +224,9 @@ internal/notify             shoutrrr (Multi-Channel) + Telegram-Bot (Buttons)
 internal/report             Text-/HTML-Formatierung
 internal/audit              JSONL-Historie
 internal/runner             Orchestrierung eines kompletten Laufs
-deploy/systemd              Beispiel-Units
+internal/systemd            cron → OnCalendar, Units erzeugen/installieren
+install.sh                  Installer für fertige Release-Binaries
+deploy/systemd              Referenz-Units
 Dockerfile, docker-compose.yml, Makefile
 ```
 
@@ -169,3 +238,5 @@ go test ./...
 
 Die Kern-Pipeline (Scan + Safety + Execute) wird gegen einen Mock-Docker-Server
 (`httptest`) end-to-end getestet, inkl. Alters- und Label-Schutz sowie Trockenlauf.
+Die cron→`OnCalendar`-Übersetzung wird zusätzlich gegen das echte
+`systemd-analyze calendar` geprüft, sofern vorhanden.

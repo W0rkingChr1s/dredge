@@ -24,7 +24,8 @@ mit interaktiver Freigabe über Telegram oder anderen Kanälen.
 
 Erststart:  dredge setup
 Testlauf:   dredge scan
-Bereinigen: dredge run`,
+Bereinigen: dredge run
+Einplanen:  sudo dredge install   (systemd-Timer)`,
 	SilenceUsage:  true,
 	SilenceErrors: true,
 }

@@ -1,8 +1,14 @@
-# dredge als Container – interner Scheduler (`daemon`) läuft im Vordergrund.
+# dredge als Container – interner Scheduler (`daemon`) läuft im Vordergrund,
+# es braucht also keinen Cron und kein systemd auf dem Host.
 #
-# Erst-Einrichtung einmalig interaktiv, danach läuft der Stack von selbst:
-#   docker compose run --rm dredge setup     # schreibt ./config/config.yaml
+# Einmalige Einrichtung:
+#   mkdir -p config
+#   sudo chown 10001:10001 config          # UID/GID des Nutzers im Image
+#   docker compose run --rm dredge setup   # schreibt ./config/config.yaml
 #   docker compose up -d
+#
+# Läuft der Container später als anderer Nutzer (siehe `user:` unten), muss
+# ./config diesem Nutzer gehören – sonst kann `setup` nichts speichern.
 #
 # Zugriff auf die Engine-API: siehe die zwei Varianten unten. Empfohlen ist
 # der socket-proxy – dredge braucht schreibenden Zugriff, und ein direkt
@@ -17,6 +23,11 @@ services:
     #   args:
     #     VERSION: "dev"
     restart: unless-stopped
+    # Standard ist UID/GID 10001 aus dem Image. Wer ./config lieber dem
+    # eigenen Account gibt, setzt hier z. B. user: "1000:1000".
+    # user: "1000:1000"
+    security_opt:
+      - no-new-privileges:true
     environment:
       TZ: "UTC"
       DREDGE_CONFIG: /config/config.yaml
@@ -32,8 +43,11 @@ services:
 
     # ---- Variante B: Socket direkt mounten -------------------------------
     # Einfacher, aber deutlich weniger abgesichert. Dann den dockerproxy-
-    # Service unten löschen und in config.yaml setzen:
-    #   docker.host: unix:///var/run/docker.sock
+    # Service unten *und* das depends_on oben löschen und in config.yaml
+    # setzen:  docker.host: unix:///var/run/docker.sock
+    # Der Container braucht dafür Zugriff auf den Socket, also entweder
+    # user: "0:0" oder die GID der docker-Gruppe des Hosts:
+    #   group_add: ["999"]
     # volumes:
     #   - /var/run/docker.sock:/var/run/docker.sock
 
@@ -43,6 +57,8 @@ services:
   dockerproxy:
     image: tecnativa/docker-socket-proxy:latest
     restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
     environment:
       PING: 1
       IMAGES: 1

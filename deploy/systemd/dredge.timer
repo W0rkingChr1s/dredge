@@ -1,11 +1,19 @@
+# Referenz-Unit – siehe dredge.service. `dredge install` übersetzt
+# schedule.cron automatisch nach OnCalendar und hängt schedule.timezone an
+# (setzt systemd >= 252 voraus; ältere Versionen nutzen die Zeit des Hosts).
+#
+# Prüfen lässt sich ein Ausdruck mit:
+#   systemd-analyze calendar 'Mon *-*-* 09:00:00 Europe/Berlin'
+#
 [Unit]
-Description=dredge schedule
+Description=dredge Zeitplan (cron: 0 9 * * 1)
+Documentation=https://github.com/W0rkingChr1s/dredge
 
 [Timer]
-# Entspricht cron "0 9 * * 1" (Montag 09:00).
-# `dredge install-timer` erzeugt das passend aus deiner config.yaml.
-OnCalendar=Mon *-*-* 09:00:00
+OnCalendar=Mon *-*-* 09:00:00 Europe/Berlin
+# Lauf nachholen, der während einer Auszeit des Hosts ausgefallen ist.
 Persistent=true
+AccuracySec=1min
 Unit=dredge.service
 
 [Install]

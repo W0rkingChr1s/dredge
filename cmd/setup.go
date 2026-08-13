@@ -3,6 +3,7 @@ package cmd
 import (
 	"context"
 	"fmt"
+	"os"
 	"strconv"
 	"strings"
 	"time"
@@ -12,6 +13,7 @@ import (
 
 	"github.com/W0rkingChr1s/dredge/internal/config"
 	"github.com/W0rkingChr1s/dredge/internal/docker"
+	"github.com/W0rkingChr1s/dredge/internal/systemd"
 )
 
 var setupCmd = &cobra.Command{
@@ -229,10 +231,38 @@ func runWizard(cfg *config.Config, path string, firstRun bool) error {
 	}
 
 	fmt.Println("\nNächste Schritte:")
-	fmt.Println("  dredge scan        # anzeigen, was bereinigt würde")
+	fmt.Println("  dredge scan            # anzeigen, was bereinigt würde")
 	fmt.Println("  dredge run --dry-run   # kompletter Probelauf")
-	fmt.Println("  sudo dredge install-timer   # per systemd planen (Host-Betrieb)")
-	return nil
+
+	if !systemd.Available() {
+		// Container-Betrieb: der interne Scheduler übernimmt den Zeitplan.
+		fmt.Println("  dredge daemon          # interner Scheduler (Container-Betrieb)")
+		return nil
+	}
+	if os.Geteuid() != 0 {
+		fmt.Println("  sudo dredge install    # als systemd-Timer einplanen")
+		return nil
+	}
+	if !firstRun {
+		fmt.Println("  sudo dredge install    # Timer mit dem neuen Zeitplan aktualisieren")
+		return nil
+	}
+
+	// Wir laufen als root auf einem systemd-Host – dann den Timer gleich
+	// mit anbieten, statt den Nutzer den Befehl merken zu lassen.
+	scheduleNow := true
+	if err := huh.NewConfirm().
+		Title("Jetzt als systemd-Timer einplanen?").
+		Description("Schreibt dredge.service + dredge.timer und aktiviert den Timer.").
+		Value(&scheduleNow).Run(); err != nil {
+		return nil
+	}
+	if !scheduleNow {
+		fmt.Println("\n  Später jederzeit: sudo dredge install")
+		return nil
+	}
+	fmt.Println()
+	return installCmd.RunE(installCmd, nil)
 }
 
 func testConnection(cfg *config.Config) error {

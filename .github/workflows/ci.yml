@@ -35,6 +35,9 @@ jobs:
       - name: go vet
         run: go vet ./...
 
+      - name: install.sh syntaktisch prüfen
+        run: sh -n install.sh
+
       - name: go test
         run: go test -race ./...
 
@@ -70,7 +73,9 @@ jobs:
               -ldflags "-s -w -X main.version=${VERSION#v}" \
               -o "dist/$out" .
           done
-          (cd dist && sha256sum * > SHA256SUMS)
+          # Nur die Binaries hashen – ein Glob über alles würde SHA256SUMS
+          # sich selbst mit aufnehmen.
+          (cd dist && sha256sum "$BIN"-linux-* > SHA256SUMS)
 
       - name: publish release
         uses: softprops/action-gh-release@v2
