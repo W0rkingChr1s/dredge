@@ -1,13 +1,38 @@
+# Referenz-Unit. Normalerweise nicht von Hand kopieren, sondern erzeugen
+# lassen – `dredge install` setzt Binärpfad, Konfigurationspfad, Zeitplan und
+# TimeoutStartSec passend zur eigenen config.yaml:
+#
+#   sudo dredge install          # schreiben und aktivieren
+#   dredge install --print       # nur ansehen
+#
 [Unit]
-Description=dredge cleanup run
+Description=dredge – sicheres Aufräumen für Docker
+Documentation=https://github.com/W0rkingChr1s/dredge
 Wants=network-online.target
-After=network-online.target
+After=network-online.target docker.service
 
 [Service]
 Type=oneshot
-Environment=DREDGE_CONFIG=/etc/dredge/config.yaml
-ExecStart=/usr/local/bin/dredge run
-# Härtung (optional):
-# DynamicUser=yes
-# ProtectSystem=strict
-# ReadWritePaths=/var/lib/dredge
+Environment="DREDGE_CONFIG=/etc/dredge/config.yaml"
+ExecStart="/usr/local/bin/dredge" run
+SyslogIdentifier=dredge
+# Muss über notify.telegram.approval_timeout_minutes liegen, sonst killt
+# systemd den Lauf mitten in einer offenen Freigabe (Standard wären 90 s).
+TimeoutStartSec=135min
+
+# Härtung – dredge braucht nur Netz/Socket und sein State-Verzeichnis.
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=strict
+ReadWritePaths="/var/lib/dredge"
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictNamespaces=true
+RestrictRealtime=true
+RestrictSUIDSGID=true
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+LockPersonality=true
+SystemCallFilter=@system-service
+SystemCallErrorNumber=EPERM
