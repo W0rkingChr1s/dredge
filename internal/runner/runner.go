@@ -132,71 +132,39 @@ func interactiveApprove(ctx context.Context, cfg *config.Config, plan *janitor.P
 	if autoNote := autoTypesNote(cfg, plan); autoNote != "" {
 		text += "\n\n<i>" + autoNote + "</i>"
 	}
-	text += "\n\n<b>Was soll zusätzlich bereinigt werden?</b>"
+	if len(askTypes) > 1 {
+		text += "\n\n<b>Was soll zusätzlich bereinigt werden?</b>" +
+			"\n<i>Mehrfachauswahl: antippen zum An-/Abwählen, dann „Auswahl bereinigen“.</i>"
+	} else {
+		text += "\n\n<b>Was soll zusätzlich bereinigt werden?</b>"
+	}
 
-	rows, allowed := buildButtons(cfg, plan, askTypes)
-	msgID, err := bot.SendButtons(ctx, text, rows)
+	ui := newApproval(plan, askTypes)
+	msgID, err := bot.SendButtons(ctx, text, ui.Keyboard())
 	if err != nil {
 		return err
 	}
 
 	timeout := time.Duration(maxInt(cfg.Notify.Telegram.ApprovalTimeoutMinutes, 1)) * time.Minute
 	opts.log("Warte auf Telegram-Freigabe (max %s) …", timeout)
-	choice, err := bot.AwaitCallback(ctx, msgID, allowed, timeout)
-	if err != nil {
+	if err := bot.AwaitDecision(ctx, msgID, timeout, ui.Press); err != nil {
 		if _, ok := err.(notify.ErrTimeout); ok {
 			applyTimeoutDefault(cfg, askTypes, decisions)
 			opts.log("Timeout — Default-Aktion '%s' angewendet.", cfg.Notify.Telegram.OnTimeout)
-			_, _ = bot.SendHTML(ctx, fmt.Sprintf("⏰ Keine Antwort — Default-Aktion <b>%s</b> angewendet.",
-				defaultLabel(cfg.Notify.Telegram.OnTimeout)))
+			// Buttons entfernen, damit ein später Klick nicht ins Leere geht.
+			_ = bot.EditMessage(ctx, msgID, text+"\n\n⏰ <b>Keine Antwort</b> — Default-Aktion: "+
+				defaultLabel(cfg.Notify.Telegram.OnTimeout), nil)
 			return nil
 		}
 		return err
 	}
-	applyChoice(choice, askTypes, decisions)
-	return nil
-}
 
-func buildButtons(cfg *config.Config, plan *janitor.Plan, askTypes []string) ([][]notify.Button, []string) {
-	var rows [][]notify.Button
-	allowed := []string{"all", "none"}
-	rows = append(rows, []notify.Button{{Text: "🧹 Alles bereinigen", Data: "all"}})
-	if len(askTypes) > 1 {
-		var row []notify.Button
-		for _, t := range askTypes {
-			g := plan.Group(t)
-			label := t
-			if g != nil {
-				label = g.Label
-			}
-			data := "only:" + t
-			allowed = append(allowed, data)
-			row = append(row, notify.Button{Text: "▶ " + short(label), Data: data})
-			if len(row) == 2 {
-				rows = append(rows, row)
-				row = nil
-			}
-		}
-		if len(row) > 0 {
-			rows = append(rows, row)
-		}
-	}
-	rows = append(rows, []notify.Button{{Text: "✋ Nichts", Data: "none"}})
-	return rows, allowed
-}
-
-func applyChoice(choice string, askTypes []string, decisions map[string]bool) {
-	switch {
-	case choice == "all":
-		for _, t := range askTypes {
-			decisions[t] = true
-		}
-	case choice == "none":
-		// leave ask types false
-	case strings.HasPrefix(choice, "only:"):
-		t := strings.TrimPrefix(choice, "only:")
+	for _, t := range ui.Chosen() {
 		decisions[t] = true
 	}
+	opts.log("Freigabe: %s", ui.Summary())
+	_ = bot.EditMessage(ctx, msgID, text+"\n\n✔️ <b>"+ui.Summary()+"</b>", nil)
+	return nil
 }
 
 func applyTimeoutDefault(cfg *config.Config, askTypes []string, decisions map[string]bool) {
@@ -259,13 +227,6 @@ func notifyAll(cfg *config.Config, title, message string) {
 		return
 	}
 	_ = notify.SendAll(cfg.Notify.URLs, title, message)
-}
-
-func short(s string) string {
-	if len(s) <= 18 {
-		return s
-	}
-	return s[:17] + "…"
 }
 
 func maxInt(a, b int) int {
